@@ -3,11 +3,26 @@ import React, { useState, useEffect } from 'react';
 type ThreatLevel = 'RED' | 'YELLOW' | 'GREEN';
 
 interface AnalysisResult {
-  leaves: string;
-  enters: string;
-  threatLevel: ThreatLevel;
+  what_leaves: string;
+  what_enters: string;
+  threat_level: ThreatLevel;
   reason: string;
 }
+
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
+
+const GEMINI_ENDPOINT =
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+
+const SYSTEM_INSTRUCTION = `You are ContractGuardian, an elite onchain security agent. The user will provide raw smart contract data, a hex transaction string, or an address. You must analyze this data for hidden security vulnerabilities, permissions, or drainage functions.
+You MUST respond strictly with a valid JSON object matching this TypeScript interface structure:
+{
+  what_leaves: string; // Plain-English bulleted items describing what assets/allowances leave the wallet.
+  what_enters: string; // Plain-English bulleted items describing what assets/items enter the wallet.
+  threat_level: 'GREEN' | 'YELLOW' | 'RED'; // Strict security classification.
+  reason: string; // A concise, one-sentence plain-English justification for the threat level.
+}
+Do not include markdown code block formatting like \`\`\`json or any conversational prose in your response. Return raw JSON text only.`;
 
 const TerminalSpinner = () => {
   const [frame, setFrame] = useState(0);
@@ -20,8 +35,90 @@ const TerminalSpinner = () => {
     return () => clearInterval(timer);
   }, []);
 
-  return <span className="font-mono text-[#39FF14] text-xl font-bold">{frames[frame]}</span>;
+  return (
+    <span className="font-mono text-[#39FF14] text-xl font-bold">
+      {frames[frame]}
+    </span>
+  );
 };
+
+async function analyzeWithGemini(payload: string): Promise<AnalysisResult> {
+  if (!GEMINI_API_KEY) {
+    throw new Error(
+      '// ERROR: VITE_GEMINI_API_KEY is not configured. Set it in your Replit Secrets.',
+    );
+  }
+
+  const response = await fetch(`${GEMINI_ENDPOINT}?key=${GEMINI_API_KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      system_instruction: {
+        parts: [{ text: SYSTEM_INSTRUCTION }],
+      },
+      contents: [
+        {
+          parts: [{ text: payload }],
+        },
+      ],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        temperature: 0.1,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    let detail = '';
+    try {
+      const parsed = JSON.parse(body);
+      detail = parsed?.error?.message ?? body;
+    } catch {
+      detail = body;
+    }
+    throw new Error(
+      `// ERROR: Gemini API returned ${response.status}. ${detail}`.trim(),
+    );
+  }
+
+  const data = await response.json();
+
+  const rawText: string =
+    data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+
+  if (!rawText) {
+    throw new Error(
+      '// ERROR: Gemini returned an empty response. Try again or refine your input.',
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    // Strip any accidental markdown fencing the model may include
+    const clean = rawText.replace(/^```[a-z]*\n?/i, '').replace(/```$/i, '').trim();
+    parsed = JSON.parse(clean);
+  } catch {
+    throw new Error(
+      `// ERROR: Could not parse Gemini response as JSON. Raw output: ${rawText.slice(0, 200)}`,
+    );
+  }
+
+  const obj = parsed as Record<string, unknown>;
+  const threat = String(obj.threat_level ?? '').toUpperCase() as ThreatLevel;
+  if (!['RED', 'YELLOW', 'GREEN'].includes(threat)) {
+    throw new Error(
+      `// ERROR: Unexpected threat_level value "${obj.threat_level}" in model response.`,
+    );
+  }
+
+  return {
+    what_leaves: String(obj.what_leaves ?? ''),
+    what_enters: String(obj.what_enters ?? ''),
+    threat_level: threat,
+    reason: String(obj.reason ?? ''),
+  };
+}
 
 export default function App() {
   const [input, setInput] = useState('');
@@ -29,61 +126,52 @@ export default function App() {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const handleAnalyze = () => {
+  const handleAnalyze = async () => {
     const trimmed = input.trim();
     if (!trimmed) {
-      setError('// ERROR: No input detected. Paste a contract address or payload to analyze.');
+      setError(
+        '// ERROR: No input detected. Paste a contract address or payload to analyze.',
+      );
       setResult(null);
       return;
     }
-    
+
     setError(null);
     setIsAnalyzing(true);
     setResult(null);
 
-    setTimeout(() => {
-      const lower = trimmed.toLowerCase();
-      let analysisResult: AnalysisResult;
-
-      if (lower.includes('approve') || lower.includes('0x095ea7b3')) {
-        analysisResult = {
-          leaves: '⚠️ Unlimited approval to spend all USDT in your wallet.',
-          enters: 'Nothing (Permission grant only).',
-          threatLevel: 'RED',
-          reason: 'This contract is requesting the ability to drain your entire USDT balance at any time.'
-        };
-      } else if (lower.includes('mint') || lower.includes('0xa9059cbb')) {
-        analysisResult = {
-          leaves: '0.05 ETH ($150.00 estimated network fee + mint cost).',
-          enters: '1x \'Genesis Hacker\' NFT.',
-          threatLevel: 'GREEN',
-          reason: 'Standard mint function verified; asset exchange matches the transaction intent.'
-        };
-      } else {
-        analysisResult = {
-          leaves: 'Gas fees only (Estimated 0.002 ETH).',
-          enters: 'Contract deployment confirmation.',
-          threatLevel: 'YELLOW',
-          reason: 'Unrecognized function signature. Proceed with caution and verify the recipient address.'
-        };
-      }
-
+    try {
+      const analysisResult = await analyzeWithGemini(trimmed);
       setResult(analysisResult);
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : '// ERROR: Unknown failure during analysis.';
+      setError(message);
+    } finally {
       setIsAnalyzing(false);
-    }, 1500);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      if (!isAnalyzing) handleAnalyze();
+    }
   };
 
   return (
     <div className="min-h-[100dvh] w-full bg-background cyber-grid text-foreground flex flex-col items-center py-12 px-4 sm:px-6">
       <div className="w-full max-w-2xl sm:max-w-3xl flex flex-col gap-8">
-        
+
         {/* Header */}
         <header className="flex flex-col gap-2">
           <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-white flex items-center gap-3">
             <span>🛡️</span> ContractGuardian
           </h1>
           <p className="font-mono text-zinc-500 text-sm sm:text-base">
-            Plain-English web3 transaction safety checker.
+            Plain-English web3 transaction safety checker. Powered by Gemini AI.
           </p>
         </header>
 
@@ -91,23 +179,28 @@ export default function App() {
         <section className="flex flex-col gap-4">
           <div className="relative">
             <textarea
-              className="w-full min-h-[160px] p-4 bg-[#121212] border border-zinc-800 rounded-sm font-mono text-sm sm:text-base text-zinc-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors resize-y placeholder:text-zinc-600"
+              className="w-full min-h-[160px] p-4 bg-[#121212] border border-zinc-800 rounded-sm font-mono text-sm sm:text-base text-zinc-300 focus:outline-none focus:border-[#39FF14] focus:ring-1 focus:ring-[#39FF14] transition-colors resize-y placeholder:text-zinc-600"
               placeholder="Paste a smart contract address, Solidity code, or hexadecimal transaction payload here..."
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
               spellCheck={false}
+              disabled={isAnalyzing}
             />
             {error && (
-              <p className="text-red-500 font-mono text-xs sm:text-sm mt-2">
+              <p className="text-red-500 font-mono text-xs sm:text-sm mt-2 break-words">
                 {error}
               </p>
             )}
+            <p className="text-zinc-700 font-mono text-xs mt-1 text-right select-none">
+              Ctrl+Enter to analyze
+            </p>
           </div>
 
           <button
             onClick={handleAnalyze}
             disabled={isAnalyzing}
-            className="w-full sm:w-auto self-start bg-[#39FF14] hover:bg-[#32e612] text-black font-bold uppercase tracking-widest px-8 py-4 rounded-sm transition-colors flex items-center justify-center gap-3 disabled:opacity-80 disabled:cursor-not-allowed"
+            className="w-full sm:w-auto self-start bg-[#39FF14] hover:bg-[#32e612] text-black font-bold uppercase tracking-widest px-8 py-4 rounded-sm transition-colors flex items-center justify-center gap-3 disabled:opacity-70 disabled:cursor-not-allowed"
           >
             {isAnalyzing ? (
               <>
@@ -123,17 +216,19 @@ export default function App() {
         {/* Output Card */}
         {result && !isAnalyzing && (
           <section className="animate-in fade-in slide-in-from-bottom-4 duration-500 bg-[#121212] border border-zinc-800 rounded-sm flex flex-col overflow-hidden">
-            
+
             {/* Section 1 */}
             <div className="p-5 sm:p-6 flex flex-col gap-3">
               <h2 className="uppercase text-zinc-500 font-mono tracking-widest text-xs flex items-center gap-2">
                 <span>💸</span> WHAT LEAVES YOUR WALLET
               </h2>
-              <ul className="list-disc list-inside font-mono text-zinc-300 text-sm sm:text-base">
-                <li>{result.leaves}</li>
+              <ul className="list-disc list-inside font-mono text-zinc-300 text-sm sm:text-base space-y-1">
+                {(result.what_leaves ?? '').split('\n').filter(Boolean).map((line, i) => (
+                  <li key={i}>{line.replace(/^[-•*]\s*/, '')}</li>
+                ))}
               </ul>
             </div>
-            
+
             <div className="h-px w-full bg-zinc-800" />
 
             {/* Section 2 */}
@@ -141,8 +236,10 @@ export default function App() {
               <h2 className="uppercase text-zinc-500 font-mono tracking-widest text-xs flex items-center gap-2">
                 <span>🎁</span> WHAT ENTERS YOUR WALLET
               </h2>
-              <ul className="list-disc list-inside font-mono text-zinc-300 text-sm sm:text-base">
-                <li>{result.enters}</li>
+              <ul className="list-disc list-inside font-mono text-zinc-300 text-sm sm:text-base space-y-1">
+                {result.what_enters.split('\n').filter(Boolean).map((line, i) => (
+                  <li key={i}>{line.replace(/^[-•*]\s*/, '')}</li>
+                ))}
               </ul>
             </div>
 
@@ -153,24 +250,24 @@ export default function App() {
               <h2 className="uppercase text-zinc-500 font-mono tracking-widest text-xs flex items-center gap-2">
                 <span>🚨</span> THREAT ASSESSMENT
               </h2>
-              
+
               <div className="flex flex-col items-start gap-3">
-                {result.threatLevel === 'RED' && (
-                  <div className="bg-red-600 border border-red-600 text-white font-mono font-bold px-3 py-1 text-sm tracking-widest rounded-sm">
+                {result.threat_level === 'RED' && (
+                  <div className="bg-red-600 border border-red-500 text-white font-mono font-bold px-3 py-1 text-sm tracking-widest rounded-sm">
                     RED / HIGH DANGER
                   </div>
                 )}
-                {result.threatLevel === 'GREEN' && (
+                {result.threat_level === 'GREEN' && (
                   <div className="bg-[#39FF14] text-black font-mono font-bold px-3 py-1 text-sm tracking-widest rounded-sm">
                     GREEN / SAFE
                   </div>
                 )}
-                {result.threatLevel === 'YELLOW' && (
-                  <div className="bg-yellow-500 border border-yellow-500 text-black font-mono font-bold px-3 py-1 text-sm tracking-widest rounded-sm">
+                {result.threat_level === 'YELLOW' && (
+                  <div className="bg-yellow-400 border border-yellow-400 text-black font-mono font-bold px-3 py-1 text-sm tracking-widest rounded-sm">
                     YELLOW / CAUTION
                   </div>
                 )}
-                
+
                 <p className="font-mono text-zinc-300 text-sm sm:text-base leading-relaxed">
                   {result.reason}
                 </p>
