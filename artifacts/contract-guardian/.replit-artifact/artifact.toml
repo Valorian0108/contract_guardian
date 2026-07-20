@@ -1,0 +1,27 @@
+kind = "web"
+previewPath = "/"
+title = "ContractGuardian"
+version = "1.0.0"
+id = "artifacts/contract-guardian"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25826
+
+[services.development]
+run = "pnpm --filter @workspace/contract-guardian run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/contract-guardian", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/contract-guardian/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25826"
+BASE_PATH = "/"

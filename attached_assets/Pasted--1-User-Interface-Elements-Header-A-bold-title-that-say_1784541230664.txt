@@ -1,0 +1,35 @@
+### 1. User Interface Elements
+- Header: A bold title that says "🛡️ ContractGuardian" and a subtitle: "Plain-English web3 transaction safety checker."
+- Main Input Area: A large, clean text area with a placeholder that reads: "Paste a smart contract address, Solidity code, or hexadecimal transaction payload here..."
+- The Action Button: A prominent button beneath the input area labeled "Analyze Contract Safety".
+
+### 2. State & Processing Logic
+- When the page loads, the output area should be completely hidden.
+- When the user clicks "Analyze Contract Safety", show a clean loading spinner for 1.5 seconds to simulate an AI security audit.
+- After the loading state finishes, reveal a beautifully formatted results card.
+
+### 3. The Output Card Structure
+The results card must be split into three distinct, high-readability sections:
+1. 💸 WHAT LEAVES YOUR WALLET: A bulleted list detailing the specific assets or permissions being sent out.
+2. 🎁 WHAT ENTERS YOUR WALLET: A bulleted list detailing the exact assets or items being received.
+3. 🚨 THREAT ASSESSMENT: A prominent, color-coded status badge followed by a 1-sentence reason. 
+
+### 4. Zero-API Key Mock System (Crucial for testing)
+To ensure the app works out of the box without requiring API keys, implement a basic text-matching logic on the frontend. If the user input contains specific keywords, show a matching mock scenario:
+
+- Scenario 1 (If user types "approve" or "0x095ea7b3"):
+  * What Leaves: "⚠️ Unlimited approval to spend all USDT in your wallet."
+  * What Enters: "Nothing (Permission grant only)."
+  * Threat Assessment: Badge says "RED / HIGH DANGER". Reason: "This contract is requesting the ability to drain your entire USDT balance at any time."
+
+- Scenario 2 (If user types "mint" or "0xa9059cbb"):
+  * What Leaves: "0.05 ETH ($150.00 estimated network fee + mint cost)."
+  * What Enters: "1x 'Genesis Hacker' NFT."
+  * Threat Assessment: Badge says "GREEN / SAFE". Reason: "Standard mint function verified; asset exchange matches the transaction intent."
+
+- Scenario 3 (Default for any other text):
+  * What Leaves: "Gas fees only (Estimated 0.002 ETH)."
+  * What Enters: "Contract deployment confirmation."
+  * Threat Assessment: Badge says "YELLOW / CAUTION". Reason: "Unrecognized function signature. Proceed with caution and verify the recipient address."
+
+Ensure all UI components are fully responsive, polished, and functional on mobile and desktop screens. Do not write any code outside of this specification.
