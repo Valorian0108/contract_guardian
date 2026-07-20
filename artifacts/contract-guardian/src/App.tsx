@@ -293,8 +293,8 @@ async function analyzeWithGemini(payload: string): Promise<AnalysisResult> {
     } catch (err: unknown) {
       lastError = err instanceof Error ? err : new Error(String(err));
       const status = (err as { status?: number }).status;
-      // Only fall through to the next model on 404 (model not found) or 400 model errors
-      if (status === 404 || status === 400) {
+      // Fall through to the next model on 404/400 (model unavailable) or 503 (overloaded)
+      if (status === 404 || status === 400 || status === 503) {
         continue;
       }
       // For auth errors, quota errors, or parse failures — surface immediately
