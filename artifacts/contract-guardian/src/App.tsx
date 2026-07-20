@@ -12,7 +12,7 @@ interface AnalysisResult {
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
 
 const GEMINI_ENDPOINT =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
 const SYSTEM_INSTRUCTION = `You are ContractGuardian, an elite onchain security agent. The user will provide raw smart contract data, a hex transaction string, or an address. You must analyze this data for hidden security vulnerabilities, permissions, or drainage functions.
 You MUST respond strictly with a valid JSON object matching this TypeScript interface structure:
