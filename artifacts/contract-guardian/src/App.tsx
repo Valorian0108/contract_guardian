@@ -11,8 +11,11 @@ interface AnalysisResult {
 
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
 
-const GEMINI_ENDPOINT =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+const GEMINI_MODELS = [
+  'gemini-3.5-flash',
+  'gemini-3-flash-preview',
+  'gemini-3.1-flash-lite',
+];
 
 const SYSTEM_INSTRUCTION = `You are ContractGuardian, an elite onchain security agent. The user will provide raw smart contract data, a hex transaction string, or an address. You must analyze this data for hidden security vulnerabilities, permissions, or drainage functions.
 You MUST respond strictly with a valid JSON object matching this TypeScript interface structure:
@@ -42,14 +45,10 @@ const TerminalSpinner = () => {
   );
 };
 
-async function analyzeWithGemini(payload: string): Promise<AnalysisResult> {
-  if (!GEMINI_API_KEY) {
-    throw new Error(
-      '// ERROR: VITE_GEMINI_API_KEY is not configured. Set it in your Replit Secrets.',
-    );
-  }
+async function tryModel(model: string, payload: string): Promise<AnalysisResult> {
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
 
-  const response = await fetch(`${GEMINI_ENDPOINT}?key=${GEMINI_API_KEY}`, {
+  const response = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -77,25 +76,21 @@ async function analyzeWithGemini(payload: string): Promise<AnalysisResult> {
     } catch {
       detail = body;
     }
-    throw new Error(
-      `// ERROR: Gemini API returned ${response.status}. ${detail}`.trim(),
-    );
+    // Throw a typed error so the caller can decide whether to retry
+    const err = new Error(`${response.status}: ${detail}`.trim()) as Error & { status: number };
+    err.status = response.status;
+    throw err;
   }
 
   const data = await response.json();
-
-  const rawText: string =
-    data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+  const rawText: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
 
   if (!rawText) {
-    throw new Error(
-      '// ERROR: Gemini returned an empty response. Try again or refine your input.',
-    );
+    throw new Error('// ERROR: Gemini returned an empty response. Try again or refine your input.');
   }
 
   let parsed: unknown;
   try {
-    // Strip any accidental markdown fencing the model may include
     const clean = rawText.replace(/^```[a-z]*\n?/i, '').replace(/```$/i, '').trim();
     parsed = JSON.parse(clean);
   } catch {
@@ -118,6 +113,35 @@ async function analyzeWithGemini(payload: string): Promise<AnalysisResult> {
     threat_level: threat,
     reason: String(obj.reason ?? ''),
   };
+}
+
+async function analyzeWithGemini(payload: string): Promise<AnalysisResult> {
+  if (!GEMINI_API_KEY) {
+    throw new Error(
+      '// ERROR: VITE_GEMINI_API_KEY is not configured. Set it in your Replit Secrets.',
+    );
+  }
+
+  let lastError: Error = new Error('// ERROR: No models available to try.');
+
+  for (const model of GEMINI_MODELS) {
+    try {
+      return await tryModel(model, payload);
+    } catch (err: unknown) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      const status = (err as { status?: number }).status;
+      // Only fall through to the next model on 404 (model not found) or 400 model errors
+      if (status === 404 || status === 400) {
+        continue;
+      }
+      // For auth errors, quota errors, or parse failures — surface immediately
+      throw lastError;
+    }
+  }
+
+  throw new Error(
+    `// ERROR: All models exhausted. Last error: ${lastError.message}`,
+  );
 }
 
 export default function App() {
