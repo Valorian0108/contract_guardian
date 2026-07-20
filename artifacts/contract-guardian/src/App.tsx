@@ -9,7 +9,48 @@ interface AnalysisResult {
   reason: string;
 }
 
+interface EtherscanTx {
+  hash: string;
+  to: string;
+  from: string;
+  value: string;
+  input: string;
+  isError: string;
+  timeStamp: string;
+}
+
+interface EtherscanTokenTx {
+  hash: string;
+  to: string;
+  from: string;
+  value: string;
+  tokenSymbol: string;
+  tokenName: string;
+  contractAddress: string;
+  timeStamp: string;
+}
+
+interface EtherscanLog {
+  address: string;   // token contract that emitted the Approval
+  topics: string[];  // [topic0, owner_padded, spender_padded]
+  data: string;      // allowance amount
+  transactionHash: string;
+  timeStamp: string;
+}
+
+interface OnchainData {
+  recentTxs: EtherscanTx[];
+  tokenTransfers: EtherscanTokenTx[];
+  approvalLogs: EtherscanLog[];
+}
+
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
+const ETHERSCAN_API_KEY = import.meta.env.VITE_ETHERSCAN_API as string | undefined;
+const ETHERSCAN_BASE = 'https://api.etherscan.io/api';
+
+// ERC-20 Approval(address indexed owner, address indexed spender, uint256 value)
+const APPROVAL_TOPIC0 = '0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925';
+const UINT256_MAX = 'f'.repeat(64); // unlimited allowance sentinel
 
 const GEMINI_MODELS = [
   'gemini-3.5-flash',
@@ -17,6 +58,86 @@ const GEMINI_MODELS = [
   'gemini-3.1-flash-lite',
 ];
 
+// ── Wallet address detection ────────────────────────────────────────────────
+function isWalletAddress(input: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/i.test(input.trim());
+}
+
+// ── Etherscan data fetch ─────────────────────────────────────────────────────
+async function fetchEtherscanData(address: string): Promise<OnchainData> {
+  const addr = address.toLowerCase();
+  const paddedAddr = '0x000000000000000000000000' + addr.slice(2);
+
+  const [txRes, tokenRes, logsRes] = await Promise.all([
+    fetch(`${ETHERSCAN_BASE}?module=account&action=txlist&address=${addr}&startblock=0&endblock=99999999&page=1&offset=20&sort=desc&apikey=${ETHERSCAN_API_KEY}`),
+    fetch(`${ETHERSCAN_BASE}?module=account&action=tokentx&address=${addr}&page=1&offset=20&sort=desc&apikey=${ETHERSCAN_API_KEY}`),
+    fetch(`${ETHERSCAN_BASE}?module=logs&action=getLogs&fromBlock=0&toBlock=latest&topic0=${APPROVAL_TOPIC0}&topic0_1_opr=and&topic1=${paddedAddr}&page=1&offset=50&apikey=${ETHERSCAN_API_KEY}`),
+  ]);
+
+  const [txData, tokenData, logsData] = await Promise.all([
+    txRes.json(),
+    tokenRes.json(),
+    logsRes.json(),
+  ]);
+
+  return {
+    recentTxs:      Array.isArray(txData.result)    ? txData.result    : [],
+    tokenTransfers: Array.isArray(tokenData.result)  ? tokenData.result  : [],
+    approvalLogs:   Array.isArray(logsData.result)   ? logsData.result   : [],
+  };
+}
+
+// ── Build enriched Gemini prompt from real on-chain data ─────────────────────
+function buildWalletPayload(address: string, data: OnchainData): string {
+  // Classify each approval log
+  const approvals = data.approvalLogs.map((log) => {
+    const spender = log.topics[2] ? '0x' + log.topics[2].slice(26) : 'unknown';
+    const rawValue = log.data.replace('0x', '').toLowerCase().padStart(64, '0');
+    const isUnlimited = rawValue === UINT256_MAX;
+    const date = new Date(parseInt(log.timeStamp, 16) * 1000).toISOString().split('T')[0];
+    return { tokenContract: log.address, spender, isUnlimited, date, txHash: log.transactionHash };
+  });
+
+  const unlimitedCount = approvals.filter((a) => a.isUnlimited).length;
+
+  // Summarise recent transactions (selector only for contract calls)
+  const txSummary = data.recentTxs.slice(0, 10).map((tx) => ({
+    to: tx.to,
+    valueETH: (parseInt(tx.value) / 1e18).toFixed(6),
+    selector: tx.input && tx.input !== '0x' ? tx.input.slice(0, 10) : 'native transfer',
+    failed: tx.isError === '1',
+    date: new Date(parseInt(tx.timeStamp) * 1000).toISOString().split('T')[0],
+  }));
+
+  // Summarise token transfers
+  const tokenSummary = data.tokenTransfers.slice(0, 10).map((t) => ({
+    token: t.tokenSymbol,
+    from: t.from,
+    to: t.to,
+    value: t.value,
+    date: new Date(parseInt(t.timeStamp) * 1000).toISOString().split('T')[0],
+  }));
+
+  return `WALLET ADDRESS RISK ANALYSIS
+Address: ${address}
+
+=== LIVE ON-CHAIN DATA (Etherscan) ===
+
+TOKEN APPROVALS (${approvals.length} total, ${unlimitedCount} UNLIMITED):
+${approvals.length > 0 ? JSON.stringify(approvals, null, 2) : 'None found.'}
+
+RECENT TRANSACTIONS (last ${txSummary.length}):
+${txSummary.length > 0 ? JSON.stringify(txSummary, null, 2) : 'No transactions found.'}
+
+RECENT ERC-20 TRANSFERS (last ${tokenSummary.length}):
+${tokenSummary.length > 0 ? JSON.stringify(tokenSummary, null, 2) : 'No token transfers found.'}
+
+=== END ON-CHAIN DATA ===
+
+Analyse the above REAL on-chain data for Wallet Compromise & Approval Risk. Pay close attention to unlimited approvals, their spender contracts, and any patterns suggesting phishing or drain risk.`;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 function cleanAndParseJSON(raw: string): Record<string, unknown> {
   // 1. Strip leading/trailing whitespace
   let text = raw.trim();
@@ -189,6 +310,7 @@ async function analyzeWithGemini(payload: string): Promise<AnalysisResult> {
 export default function App() {
   const [input, setInput] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('Analyzing Payload...');
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -196,7 +318,7 @@ export default function App() {
     const trimmed = input.trim();
     if (!trimmed) {
       setError(
-        '// ERROR: No input detected. Paste a contract address or payload to analyze.',
+        '// ERROR: No input detected. Paste a contract address, wallet address, or payload to analyze.',
       );
       setResult(null);
       return;
@@ -207,7 +329,24 @@ export default function App() {
     setResult(null);
 
     try {
-      const analysisResult = await analyzeWithGemini(trimmed);
+      let payload: string;
+
+      if (isWalletAddress(trimmed)) {
+        if (!ETHERSCAN_API_KEY) {
+          throw new Error(
+            '// ERROR: VITE_ETHERSCAN_API is not configured. Set it in your Replit Secrets.',
+          );
+        }
+        setStatusMessage('Fetching on-chain data...');
+        const onchainData = await fetchEtherscanData(trimmed);
+        setStatusMessage('Analyzing with AI...');
+        payload = buildWalletPayload(trimmed, onchainData);
+      } else {
+        setStatusMessage('Analyzing Payload...');
+        payload = trimmed;
+      }
+
+      const analysisResult = await analyzeWithGemini(payload);
       setResult(analysisResult);
     } catch (err: unknown) {
       const message =
@@ -217,6 +356,7 @@ export default function App() {
       setError(message);
     } finally {
       setIsAnalyzing(false);
+      setStatusMessage('Analyzing Payload...');
     }
   };
 
@@ -271,7 +411,7 @@ export default function App() {
             {isAnalyzing ? (
               <>
                 <TerminalSpinner />
-                <span>Analyzing Payload...</span>
+                <span>{statusMessage}</span>
               </>
             ) : (
               'Analyze Contract Safety'
