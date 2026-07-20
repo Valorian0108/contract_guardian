@@ -17,6 +17,33 @@ const GEMINI_MODELS = [
   'gemini-3.1-flash-lite',
 ];
 
+function cleanAndParseJSON(raw: string): Record<string, unknown> {
+  // 1. Strip leading/trailing whitespace
+  let text = raw.trim();
+
+  // 2. Remove fenced code blocks: ```json ... ``` or ``` ... ```
+  text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+
+  // 3. Extract the first {...} block in case the model prefixes prose
+  const braceStart = text.indexOf('{');
+  const braceEnd = text.lastIndexOf('}');
+  if (braceStart !== -1 && braceEnd > braceStart) {
+    text = text.slice(braceStart, braceEnd + 1);
+  }
+
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    // Graceful fallback — return a safe caution object instead of crashing
+    return {
+      what_leaves: 'Could not parse model output.',
+      what_enters: 'Could not parse model output.',
+      threat_level: 'YELLOW',
+      reason: 'The AI response was not valid JSON. Treat this transaction with caution.',
+    };
+  }
+}
+
 const SYSTEM_INSTRUCTION = `You are ContractGuardian, an elite onchain security agent. The user will provide raw smart contract data, a hex transaction string, or an address. You must analyze this data for hidden security vulnerabilities, permissions, or drainage functions.
 You MUST respond strictly with a valid JSON object matching this TypeScript interface structure:
 {
@@ -89,29 +116,18 @@ async function tryModel(model: string, payload: string): Promise<AnalysisResult>
     throw new Error('// ERROR: Gemini returned an empty response. Try again or refine your input.');
   }
 
-  let parsed: unknown;
-  try {
-    const clean = rawText.replace(/^```[a-z]*\n?/i, '').replace(/```$/i, '').trim();
-    parsed = JSON.parse(clean);
-  } catch {
-    throw new Error(
-      `// ERROR: Could not parse Gemini response as JSON. Raw output: ${rawText.slice(0, 200)}`,
-    );
-  }
+  const obj = cleanAndParseJSON(rawText);
 
-  const obj = parsed as Record<string, unknown>;
   const threat = String(obj.threat_level ?? '').toUpperCase() as ThreatLevel;
-  if (!['RED', 'YELLOW', 'GREEN'].includes(threat)) {
-    throw new Error(
-      `// ERROR: Unexpected threat_level value "${obj.threat_level}" in model response.`,
-    );
-  }
+  const validThreat = (['RED', 'YELLOW', 'GREEN'] as const).includes(threat as ThreatLevel)
+    ? (threat as ThreatLevel)
+    : 'YELLOW';
 
   return {
-    what_leaves: String(obj.what_leaves ?? ''),
-    what_enters: String(obj.what_enters ?? ''),
-    threat_level: threat,
-    reason: String(obj.reason ?? ''),
+    what_leaves: String(obj.what_leaves ?? 'Unable to determine outgoing assets.'),
+    what_enters: String(obj.what_enters ?? 'Unable to determine incoming assets.'),
+    threat_level: validThreat,
+    reason: String(obj.reason ?? 'Response could not be fully parsed; treat with caution.'),
   };
 }
 
