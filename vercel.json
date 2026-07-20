@@ -1,0 +1,6 @@
+{
+  "buildCommand": "pnpm --filter @workspace/contract-guardian build",
+  "outputDirectory": "artifacts/contract-guardian/dist/public",
+  "installCommand": "pnpm install",
+  "framework": null
+}
