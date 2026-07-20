@@ -260,7 +260,7 @@ async function tryModel(model: string, payload: string): Promise<AnalysisResult>
   const rawText: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
 
   if (!rawText) {
-    throw new Error('// ERROR: Gemini returned an empty response. Try again or refine your input.');
+    throw new Error('Gemini returned an empty response. Try again or refine your input.');
   }
 
   const obj = cleanAndParseJSON(rawText);
@@ -281,11 +281,11 @@ async function tryModel(model: string, payload: string): Promise<AnalysisResult>
 async function analyzeWithGemini(payload: string): Promise<AnalysisResult> {
   if (!GEMINI_API_KEY) {
     throw new Error(
-      '// ERROR: VITE_GEMINI_API_KEY is not configured. Set it in your Replit Secrets.',
+      'VITE_GEMINI_API_KEY is not configured. Set it in your Replit Secrets.',
     );
   }
 
-  let lastError: Error = new Error('// ERROR: No models available to try.');
+  let lastError: Error = new Error('No models available to try.');
 
   for (const model of GEMINI_MODELS) {
     try {
@@ -303,7 +303,7 @@ async function analyzeWithGemini(payload: string): Promise<AnalysisResult> {
   }
 
   throw new Error(
-    `// ERROR: All models exhausted. Last error: ${lastError.message}`,
+    `All models exhausted. Last error: ${lastError.message}`,
   );
 }
 
@@ -318,7 +318,7 @@ export default function App() {
     const trimmed = input.trim();
     if (!trimmed) {
       setError(
-        '// ERROR: No input detected. Paste a contract address, wallet address, or payload to analyze.',
+        'No input detected. Paste a contract address, wallet address, or payload to analyze.',
       );
       setResult(null);
       return;
@@ -334,7 +334,7 @@ export default function App() {
       if (isWalletAddress(trimmed)) {
         if (!ETHERSCAN_API_KEY) {
           throw new Error(
-            '// ERROR: VITE_ETHERSCAN_API is not configured. Set it in your Replit Secrets.',
+            'VITE_ETHERSCAN_API is not configured. Set it in your Replit Secrets.',
           );
         }
         setStatusMessage('Fetching on-chain data...');
@@ -352,7 +352,7 @@ export default function App() {
       const message =
         err instanceof Error
           ? err.message
-          : '// ERROR: Unknown failure during analysis.';
+          : 'Unknown failure during analysis.';
       setError(message);
     } finally {
       setIsAnalyzing(false);
@@ -394,9 +394,12 @@ export default function App() {
               disabled={isAnalyzing}
             />
             {error && (
-              <p className="text-red-500 font-mono text-xs sm:text-sm mt-2 break-words">
-                {error}
-              </p>
+              <div className="mt-3 flex items-start gap-3 bg-red-950/60 border border-red-800 rounded-sm px-4 py-3">
+                <span className="text-red-400 text-lg leading-none mt-0.5 shrink-0">⚠</span>
+                <p className="text-red-300 font-mono text-xs sm:text-sm leading-relaxed break-words">
+                  {error}
+                </p>
+              </div>
             )}
             <p className="text-zinc-700 font-mono text-xs mt-1 text-right select-none">
               Ctrl+Enter to analyze
@@ -459,18 +462,18 @@ export default function App() {
 
               <div className="flex flex-col items-start gap-3">
                 {result.threat_level === 'RED' && (
-                  <div className="bg-red-600 border border-red-500 text-white font-mono font-bold px-3 py-1 text-sm tracking-widest rounded-sm">
-                    RED / HIGH DANGER
+                  <div className="flex items-center gap-2 bg-red-600 border border-red-500 text-white font-mono font-bold px-4 py-2 text-sm tracking-widest rounded-sm">
+                    <span>🔴</span> RISKY
                   </div>
                 )}
                 {result.threat_level === 'GREEN' && (
-                  <div className="bg-[#39FF14] text-black font-mono font-bold px-3 py-1 text-sm tracking-widest rounded-sm">
-                    GREEN / SAFE
+                  <div className="flex items-center gap-2 bg-[#39FF14] text-black font-mono font-bold px-4 py-2 text-sm tracking-widest rounded-sm">
+                    <span>🟢</span> SAFE
                   </div>
                 )}
                 {result.threat_level === 'YELLOW' && (
-                  <div className="bg-yellow-400 border border-yellow-400 text-black font-mono font-bold px-3 py-1 text-sm tracking-widest rounded-sm">
-                    YELLOW / CAUTION
+                  <div className="flex items-center gap-2 bg-yellow-400 border border-yellow-400 text-black font-mono font-bold px-4 py-2 text-sm tracking-widest rounded-sm">
+                    <span>🟡</span> CAUTION
                   </div>
                 )}
 
