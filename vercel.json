@@ -1,6 +1,17 @@
 {
   "buildCommand": "pnpm --filter @workspace/contract-guardian build",
   "outputDirectory": "artifacts/contract-guardian/dist/public",
-  "installCommand": "pnpm install",
-  "framework": null
+  "installCommand": "pnpm install --frozen-lockfile",
+  "framework": null,
+  "headers": [
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    }
+  ],
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
 }
