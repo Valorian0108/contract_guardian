@@ -1,7 +1,7 @@
 {
+  "installCommand": "npm i -g pnpm@10.26.1 && pnpm install",
   "buildCommand": "pnpm --filter @workspace/contract-guardian build",
   "outputDirectory": "artifacts/contract-guardian/dist/public",
-  "installCommand": "pnpm install --frozen-lockfile",
   "framework": null,
   "headers": [
     {
