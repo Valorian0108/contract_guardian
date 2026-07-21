@@ -1,7 +1,7 @@
 {
-  "installCommand": "npm i -g pnpm@10.26.1 && pnpm install",
-  "buildCommand": "pnpm --filter @workspace/contract-guardian build",
-  "outputDirectory": "artifacts/contract-guardian/dist/public",
+  "installCommand": "npx --yes pnpm@10.26.1 install",
+  "buildCommand": "npx pnpm@10.26.1 --filter @workspace/contract-guardian build && cp -r artifacts/contract-guardian/dist/public ./public",
+  "outputDirectory": "public",
   "framework": null,
   "headers": [
     {
